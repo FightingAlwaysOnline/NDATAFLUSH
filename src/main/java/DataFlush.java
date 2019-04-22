@@ -1,10 +1,6 @@
 
 import baidutranslate.TransApi;
-import com.google.gson.JsonArray;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
-import com.gtranslate.Language;
-import com.gtranslate.Translator;
+
 import de.l3s.boilerpipe.BoilerpipeExtractor;
 import de.l3s.boilerpipe.BoilerpipeProcessingException;
 import de.l3s.boilerpipe.document.Image;
@@ -32,7 +28,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 
-// This is a test comment. I'm practicing with Git!
 public class DataFlush {
     final static int Max_T=10;
     final static String Filepath="C:\\Users\\91916\\OneDrive\\Documents";
@@ -41,6 +36,8 @@ public class DataFlush {
 
     private static final String APP_ID = "20190407000285289";
     private static final String SECURITY_KEY = "qB6O4p63wfVKj3WAUZCV";
+
+    static TransApi api;
     public DataFlush(){
 
     }
@@ -48,97 +45,173 @@ public class DataFlush {
     public static void main(String[] args) {
         Statement stmt;
         Connection con;
-        String web_content="";
         InputStream in=null;
         int Size=0;
 
 
-        System.out.println("come here");
-        TransApi api = new TransApi(APP_ID, SECURITY_KEY);
-
+        api = new TransApi(APP_ID, SECURITY_KEY);
 
         try {
             Class.forName("com.mysql.cj.jdbc.Driver");
-            con = DriverManager.getConnection(Database_url,"root","zyj.1234");
-            stmt = con.createStatement();
 
-            ResultSet rs=stmt.executeQuery("select * from store_url_info");
-            final BoilerpipeExtractor extractor = CommonExtractors.ARTICLE_EXTRACTOR;
-            ImageExtractor ie=ImageExtractor.INSTANCE;
+            con = DriverManager.getConnection(Database_url, "root", "zyj.1234");
+            stmt = con.createStatement();
+            ResultSet rs = stmt.executeQuery("select * from store_url_info");
+
+
             rs.last();
-            Size=rs.getRow();
+            Size = rs.getRow();
             rs.beforeFirst();
 
-            FlushFile flushFile=new FlushFile();
+            ExecutorService pool = Executors.newFixedThreadPool(Max_T);
 
-            URL url;
-            int count=0;
-            File doc;
-            List<Image> imgUrls;
-            InputStream img_in;
-            ExecutorService pool = null;
-            System.out.println(Size+"------");
-            pool= Executors.newFixedThreadPool(Max_T);
 
-            JsonObject jsonObj;
-            String res;
-            JsonArray js;
-            String f_con;
             String docPath;
-            URL myUrl;
-            String content;
-            String str;
-
-        for(int i=0;i<Size;i++){
-            rs.next();
-            f_con="";
-            docPath=rs.getString("title").replaceAll("[^a-zA-Z0-9\\.\\-]", "_");
-            myUrl=new URL(rs.getString("url"));
-            content=BoilerGetText(myUrl);
-
-            doc=new File(Filepath+"//"+docPath);
-            doc.deleteOnExit();
-            doc.mkdir();
-
-            str=api.getTransResult(content, "en", "zh");
-
-            jsonObj = (JsonObject)new JsonParser().parse(str);//解析json字段
-            res = jsonObj.get("trans_result").toString();//获取json字段中的 result字段，因为result字段本身即是一个json数组字段，所以要进一步解析
-            js = new JsonParser().parse(res).getAsJsonArray();//解析json数组字段
-             for(int x=0;x<js.size();x++){
-                 jsonObj = (JsonObject)js.get(x);//result数组中只有一个元素，所以直接取第一个元素
-                 f_con+=jsonObj.get("dst").getAsString()+"\n";
-
-             }
-
-
-            flushFile.CreateWordFile(Filepath+"//"+docPath,docPath+".docx",f_con);
-
-            imgUrls = ie.process(myUrl, extractor);
-
-            if (!imgUrls.isEmpty()){
-                for (Image img : imgUrls) {
-                    url=new URL(img.getSrc());
-                    img_in= url.openConnection().getInputStream();
-                    GetImg getImg=new GetImg(Filepath,docPath,img,img_in,flushFile,count++);
-                    Thread td=new Thread(getImg);
-                    pool.execute(td);
+            String url;
+            int id;
+            for (int i = 0; i < Size; i++) {
+                if(rs.isLast()) break;
+                rs.next();
+                id=rs.getInt("id");
+                if (rs.getBoolean("w_status")){
+                    continue;
                 }
+                docPath=rs.getString("title").replaceAll("[^a-zA-Z0-9\\.\\-]", "_");
+                url=rs.getString("url");
+                pool.submit(new Thread(new MainRun(url,docPath,api,stmt,id)));
             }
-        }
+            pool.shutdown();
 
-        } catch (MalformedURLException e) {
-            e.printStackTrace();
-        } catch (IOException e) {
-            e.printStackTrace();
         } catch (ClassNotFoundException e) {
             e.printStackTrace();
         } catch (SQLException e) {
             e.printStackTrace();
-        } catch (BoilerpipeProcessingException e) {
-            e.printStackTrace();
+        }
+
+
+    }
+
+
+    private static String BoilerGetText(URL myUrl){
+
+
+        try {
+
+            InputSource document= HTMLFetcher.fetch(myUrl).toInputSource();
+            BoilerpipeSAXInput saxInput= null;
+            saxInput = new BoilerpipeSAXInput(document);
+            TextDocument document1=saxInput.getTextDocument();
+
+            return ArticleExtractor.INSTANCE.getText(document1);
+
         } catch (SAXException e) {
             e.printStackTrace();
+            return "";
+        } catch (BoilerpipeProcessingException e) {
+            e.printStackTrace();
+            return "";
+        } catch (IOException e) {
+            return "";
+        }
+
+
+    }
+
+   static class MainRun implements Runnable{
+
+         String docPath;
+         URL myUrl;
+         String content;
+         String str;
+
+         URL url;
+         String web_url;
+         int count = 0;
+
+         List<Image> imgUrls;
+         JsonParse jsonParse;
+
+       final BoilerpipeExtractor extractor = CommonExtractors.ARTICLE_EXTRACTOR;
+       final ImageExtractor ie = ImageExtractor.INSTANCE;
+
+       ExecutorService pool1 = null;
+       FlushFile flushFile;
+       TransApi api;
+       Statement stmt;
+       int id;
+
+       MainRun(String ras,String path ,TransApi apis,Statement rs,int id) {
+            web_url=ras;
+            pool1 = Executors.newFixedThreadPool(Max_T);
+            this.docPath=path;
+            this.api=apis;
+            this.stmt=rs;
+            this.id=id;
+        }
+
+        @Override
+        public void run() {
+
+            flushFile = new FlushFile();
+            try {
+                jsonParse=new JsonParse();
+                String docName_json=api.getTransResult(docPath, "en", "zh");
+
+                String Dic_name=jsonParse.JtoS(docName_json).replaceAll("[^a-zA-Z0-9\\.\\-\\u4e00-\\u9fa5]", "_");
+
+                myUrl=new URL(web_url);
+
+                if (myUrl.openConnection().getContentType()==null) return;
+
+                content=BoilerGetText(myUrl);
+
+                if (content.length()<20 || content.equals("")){
+                    return ;
+                }
+
+                File file=new File(DataFlush.Filepath+"\\"+Dic_name);
+                file.deleteOnExit();
+                file.mkdir();
+
+                long a=content.substring(0,2040).length();
+                str=api.getTransResult(content.substring(0,2040), "en", "zh");
+
+                content=content+"\n"+"this is the web url:"+web_url;
+                imgUrls = ie.process(myUrl, extractor);
+
+                int i=flushFile.CreateWordFile(DataFlush.Filepath+"\\"+Dic_name,Dic_name+".docx",jsonParse.JtoS(str));
+                stmt.executeUpdate("update store_url_info set w_status=true where id="+id);
+                if (i==0){
+
+                    file.deleteOnExit();
+                    return;
+                }
+
+                if (!imgUrls.isEmpty()){
+                    for (Image img : imgUrls) {
+                        if (img.getSrc().contains("data:image/gif")) continue;
+                        url=new URL(img.getSrc());
+
+                        BufferedInputStream img_in=new BufferedInputStream(url.openConnection().getInputStream());
+                        pool1.submit(new GetImg(Filepath,Dic_name,img,img_in,flushFile,count++));
+                    }
+                    pool1.shutdown();
+                }
+
+            } catch (MalformedURLException e) {
+                e.printStackTrace();
+            } catch (IOException e) {
+                e.printStackTrace();
+            } catch (BoilerpipeProcessingException e) {
+                System.out.println(e.getMessage()+e.getLocalizedMessage()+"this is error");
+                e.printStackTrace();
+            } catch (SAXException e) {
+                e.printStackTrace();
+                System.out.println(e.getCause().getMessage()+e.getException()+e.getMessage()+"this is error");;
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
+
         }
     }
 
@@ -146,12 +219,12 @@ public class DataFlush {
     static class GetImg implements Runnable{
         private String Filepath;
         private String docPath;
-        private InputStream img_in;
+        private BufferedInputStream img_in;
         private Image img;
         private FlushFile flushFile;
         private int count;
 
-        GetImg(String path,String doc,Image ig,InputStream in,FlushFile flush,int co){
+        GetImg(String path,String doc,Image ig,BufferedInputStream in,FlushFile flush,int co){
             this.Filepath=path;
             this.docPath=doc;
             this.img=ig;
@@ -162,36 +235,12 @@ public class DataFlush {
         }
         @Override
         public void run() {
-          int state=  flushFile.CreateImg(Filepath,docPath,img.getAlt()+String.valueOf(count++)+".jpg",img_in);
-
+          flushFile.CreateImg(Filepath,docPath,docPath+String.valueOf(count++)+".jpg",img_in);
         }
     }
 
-    private static String BoilerGetText(URL myUrl){
 
-
-        try {
-
-            InputSource document= HTMLFetcher.fetch(myUrl).toInputSource();
-
-            BoilerpipeSAXInput saxInput= null;
-            saxInput = new BoilerpipeSAXInput(document);
-            TextDocument document1=saxInput.getTextDocument();
-
-            return ArticleExtractor.INSTANCE.getText(document1);
-
-        } catch (SAXException e) {
-            e.printStackTrace();
-            return null;
-        } catch (BoilerpipeProcessingException e) {
-            e.printStackTrace();
-            return null;
-        } catch (IOException e) {
-            e.printStackTrace();
-            return null;
-        }
-
-
-    }
 
 }
+
+

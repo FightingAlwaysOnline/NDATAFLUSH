@@ -55,14 +55,11 @@ public class FlushFile {
             run.setText(con[i]);
         }
 
-        File file =new File(FilePath+"//"+fileName);
+        File file =new File(FilePath+"\\"+fileName);
 
             try {
 
-                if (file.exists()){
-                    file.delete();
-                    file.createNewFile();
-                }
+                file.createNewFile();
                 FileOutputStream out=new FileOutputStream(file);
                 document.write(out);
                 out.close();
@@ -73,24 +70,22 @@ public class FlushFile {
         return 1;
     }
 
-    public int CreateImg(String Filepath,String docPath,String Filename,InputStream in){
+    public int CreateImg(String Filepath,String docPath,String Filename,BufferedInputStream in) {
 
 
 
         File file=new File(Filepath+"//"+docPath+"//"+Filename);
 
         try {
+
             FileOutputStream out=new FileOutputStream(file);
-            BufferedOutputStream buffer=new BufferedOutputStream(out);
-
-            int data=-1;
-            while((data=in.read())>=0){
-                out.write((char)data);
-                out.flush();
+            BufferedOutputStream writer=new BufferedOutputStream(out);
+            int Temp_data=0;
+            while((Temp_data=in.read())!=-1){
+                writer.write(Temp_data);
             }
-            out.close();
-
-
+            writer.flush();
+            writer.close();
 
         } catch (FileNotFoundException e) {
             e.printStackTrace();
